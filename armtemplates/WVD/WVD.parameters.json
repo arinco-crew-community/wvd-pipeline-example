@@ -1,0 +1,84 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "wvdNamePrefix": {
+            "value": null
+        },
+        "wvdNumberOfInstances": {
+            "value": null
+        },
+        "wvdImageSource": {
+            "value": null
+        },
+        "wvdGalleryImageSKU": {
+            "value": null
+        },
+        "wvdVMDiskType": {
+            "value": null
+        },
+        "wvdVmSize": {
+            "value": null
+        },
+        "enableAcceleratedNetworking": {
+            "value": null
+        },
+        "domainToJoin": {
+            "value": null
+        },
+        "existingDomainUPN": {
+            "value": null
+        },
+        "existingDomainPassword": {
+            "value": null
+        },
+        "existingVnetName": {
+            "value": null
+        },
+        "existingSubnetName": {
+            "value": null
+        },
+        "virtualNetworkResourceGroupName": {
+            "value": null
+        },
+        "rdBrokerURL": {
+            "value": null
+        },
+        "existingTenantGroupName": {
+            "value": null
+        },
+        "existingTenantName": {
+            "value": null
+        },
+        "hostPoolName": {
+            "value": null
+        },
+        "tenantAdminUpnOrApplicationId": {
+            "value": null
+        },
+        "tenantAdminPassword": {
+            "value": null
+        },
+        "isServicePrincipal": {
+            "value": null
+        },
+        "aadTenantId": {
+            "value": null
+        },
+        "availabilitySetName": {
+            "value": null
+        },
+        "dscStorageAccount": {
+            "value": null
+        },
+        "dscStorageAccountContainer": {
+            "value": null
+        },
+        "dscStorageAccountSasToken": {
+            "value": null
+        },
+        "ouPath":{
+            "value": null
+        }
+    }
+}

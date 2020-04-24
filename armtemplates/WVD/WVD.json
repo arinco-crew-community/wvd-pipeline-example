@@ -1,0 +1,470 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "wvdNamePrefix": {
+            "type": "string",
+            "metadata": {
+                "description": "This prefix will be used in combination with the VM number to create the VM name. If using 'wvd' as the prefix, VMs would be named 'wvd0', 'wvd1', etc. You should use a unique prefix to reduce name collisions in Active Directory."
+            }
+        },
+        "wvdNumberOfInstances": {
+            "type": "int",
+            "minValue": 1,
+            "maxValue": 200,
+            "metadata": {
+                "description": "Number of session hosts that will be created and added to the host pool."
+            }
+        },
+        "wvdImageSource": {
+            "type": "string",
+            "metadata": {
+                "description": "Select the image source for the session host vms. VMs from a Gallery image will be created with Managed Disks."
+            },
+            "allowedValues": [                
+                "CustomImage",
+                "Gallery"
+            ]
+        },
+        "location": {
+            "type": "string",
+            "defaultValue": "[resourceGroup().location]",
+            "metadata": {
+                "description": "WVD location."
+            }
+        },
+        "wvdGalleryImageSKU": {
+            "type": "string",
+            "metadata": {
+                "description": "(Required when wvdImageSource = Gallery) Gallery image SKU. Values without a numeric suffix, such as 1903, will use the latest release available in this template."
+            },
+            "allowedValues": [
+                "Windows-10-Enterprise-multi-session-with-Office-365-ProPlus",
+                "Windows-10-Enterprise-multi-session",
+                "Windows-10-Enterprise-Latest",
+                "2019-Datacenter"
+            ]
+        },
+        "wvdCustomImageSourceName": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": {
+                "description": "(Required when wvdImageSource = CustomImage) Name of the managed disk."
+            }
+        },
+        "wvdCustomImageSourceResourceGroup": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": {
+                "description": "(Required when wvdImageSource = CustomImage) Resource group name for the managed disk, if you choose to provide one."
+            }
+        },
+        "wvdVMDiskType": {
+            "type": "string",
+            "allowedValues": [
+                "Premium_LRS",
+                "StandardSSD_LRS",
+                "Standard_LRS"
+            ],
+            "metadata": {
+                "description": "The VM disk type for the VM: Premium_LRS, Standard_LRS or StandardSSD_LRS."
+            }
+        },
+        "wvdVmSize": {
+            "type": "string",
+            "metadata": {
+                "description": "The size of the session host VMs: Standard_D2_v2"
+            }
+        },
+        "enableAcceleratedNetworking": {
+            "type": "bool",
+            "metadata": {
+                "description": "Enables Accelerated Networking feature, notice that VM size must support it, this is supported in most of general purpose and compute-optimized instances with 2 or more vCPUs, on instances that supports hyperthreading it is required minimum of 4 vCPUs."
+            }
+        },
+        "domainToJoin": {
+            "type": "string",
+            "metadata": {
+                "description": "FQDN of the AD Domain to which session host VMs are going to be joined. For example, 'contoso.com'."
+            }
+        },
+        "existingDomainUPN": {
+            "type": "string",
+            "metadata": {
+                "description": "A username in the domain that has privileges to join the session hosts to the domain. For example, 'user1@contoso.com'."
+            }
+        },
+        "existingDomainPassword": {
+            "type": "securestring",
+            "metadata": {
+                "description": "The password that corresponds to the existing domain username."
+            }
+        },
+        "ouPath": {
+            "type": "string",
+            "metadata": {
+                "description": "Specify an organizational unit (OU) to place the new virtual machines when joining the domain. Example OU: 'OU=testOU;DC=domain;DC=Domain;DC=com'"
+            }
+        },
+        "existingVnetName": {
+            "type": "string",
+            "metadata": {
+                "description": "The name of the virtual network the VMs will be connected to."
+            }
+        },
+        "existingSubnetName": {
+            "type": "string",
+            "metadata": {
+                "description": "The subnet the VMs will be placed in."
+            }
+        },
+        "virtualNetworkResourceGroupName": {
+            "type": "string",
+            "metadata": {
+                "description": "The resource group containing the existing virtual network."
+            }
+        },
+        "rdBrokerURL": {
+            "type": "string",
+            "metadata": {
+                "description": "The Broker URL of the Windows Virtual Desktop deployment the session hosts will be connected to."
+            },
+            "defaultValue": "https://rdbroker.wvd.microsoft.com"
+        },
+        "existingTenantGroupName": {
+            "type": "string",
+            "metadata": {
+                "description": "The name of the tenant group in the Windows Virtual Desktop deployment"
+            },
+            "defaultValue": "Default Tenant Group"
+        },
+        "existingTenantName": {
+            "type": "string",
+            "metadata": {
+                "description": "The name of the tenant in the Windows Virtual Desktop deployment."
+            }
+        },
+        "hostPoolName": {
+            "type": "string",
+            "metadata": {
+                "description": "The name of the hostpool to be created in the RDS Tenant."
+            }
+        },
+        "defaultDesktopUsers": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": {
+                "description": "(Optional) Provide a comma separated list of users you would like to assign to access the desktop for this host pool. Example: user1@contoso.com,user2@contoso.com,user3@contoso.com "
+            }
+        },
+        "tenantAdminUpnOrApplicationId": {
+            "type": "string",
+            "metadata": {
+                "description": "The template will fail if you enter a user account that requires MFA or an application that is secured by a certificate. The UPN or ApplicationId must be an RDS Owner in the Windows Virtual Desktop Tenant to create the hostpool or an RDS Owner of the host pool to provision the host pool with additional VMs."
+            }
+        },
+        "tenantAdminPassword": {
+            "type": "securestring",
+            "metadata": {
+                "description": "The password that corresponds to the tenant admin UPN."
+            }
+        },
+        "isServicePrincipal": {
+            "type": "bool",
+            "metadata": {
+                "description": "The boolean value indicating if the credentials are for a service principal."
+            }
+        },
+        "aadTenantId": {
+            "type": "string",
+            "metadata": {
+                "description": "This value identifies the Azure AD tenant."
+            }
+        },
+        "availabilitySetName": {
+            "type": "string",
+            "metadata": {
+                "description": "Availability set name."
+            }
+        },
+        "availabilitySetUpdateDomains": {
+            "type": "int",
+            "defaultValue": 5,
+            "metadata": {
+                "description": "Number of update domains for availability set."
+            }
+        },
+        "availabilitySetFaultDomains": {
+            "type": "int",
+            "defaultValue": 2,
+            "metadata": {
+                "description": "Number of fault domains for availability set."
+            }
+        },
+        "dscStorageAccount": {
+            "type": "string",
+            "metadata": {
+                "description": "Storage account with DSC configuration files."
+            }
+        },
+        "dscStorageAccountContainer": {
+            "type": "string",
+            "metadata": {
+                "description": "Storage account container holding DSC confguration files."
+            }
+        },
+        "dscStorageAccountSasToken": {
+            "type": "string",
+            "metadata": {
+                "description": "Dsc storage account sas token."
+            }
+        }
+    },
+    "variables": {
+        "existingDomainUsername": "[first(split(parameters('existingDomainUPN'), '@'))]",     
+        "vmImageReference": {
+            "customImage": {
+                "id": "[resourceId(parameters('wvdCustomImageSourceResourceGroup'), 'Microsoft.Compute/images', parameters('wvdCustomImageSourceName'))]"
+            },
+            "gallery": "[variables('galleryimage')[parameters('wvdGalleryImageSKU')]]"
+        },
+        "galleryImage": {
+            "Windows-10-Enterprise-multi-session-with-Office-365-ProPlus": {
+                "publisher": "MicrosoftWindowsDesktop",
+                "offer": "office-365",
+                "sku": "19h2-evd-o365pp",
+                "version": "latest"
+            },
+            "Windows-10-Enterprise-multi-session": {
+                "publisher": "MicrosoftWindowsDesktop",
+                "offer": "Windows-10",
+                "sku": "19h2-evd",
+                "version": "latest"
+            },
+            "Windows-10-Enterprise-Latest": {
+                "publisher": "MicrosoftWindowsDesktop",
+                "offer": "Windows-10",
+                "sku": "19h2-ent",
+                "version": "latest"
+            },
+            "2019-Datacenter": {
+                "publisher": "MicrosoftwindowsServer",
+                "offer": "WindowsServer",
+                "sku": "2019-Datacenter",
+                "version": "latest"
+            }
+        }
+    },
+    "resources": [
+        {
+            "apiVersion": "2019-12-01",
+            "type": "Microsoft.Compute/availabilitySets",
+            "name": "[parameters('availabilitySetName')]",
+            "location": "[parameters('location')]",
+            "properties": {
+                "platformUpdateDomainCount": "[parameters('availabilitySetUpdateDomains')]",
+                "platformFaultDomainCount": "[parameters('availabilitySetFaultDomains')]"
+            },
+            "sku": {
+                "name": "Aligned"
+            }
+        },        
+        {
+            "apiVersion": "2019-11-01",
+            "type": "Microsoft.Network/networkInterfaces",
+            "name": "[if(less(copyIndex(1), 10), concat(parameters('wvdNamePrefix'), '0', copyIndex(1), '-nic01'), concat(parameters('wvdNamePrefix'), copyIndex(1), '-nic01'))]",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Compute/availabilitySets', parameters('availabilitySetName'))]"
+            ],
+            "copy": {
+                "name": "wvd-nic-loop",
+                "count": "[parameters('wvdNumberOfInstances')]"
+            },
+            "properties": {
+                "ipConfigurations": [
+                    {
+                        "name": "ipconfig",
+                        "properties": {
+                            "privateIPAllocationMethod": "Dynamic",
+                            "subnet": {
+                                "id": "[resourceId(parameters('virtualNetworkResourceGroupName'), 'Microsoft.Network/virtualNetworks/subnets', parameters('existingVnetName'), parameters('existingSubnetName'))]"
+                            }
+                        }
+                    }
+                ],
+                "enableAcceleratedNetworking": "[parameters('enableAcceleratedNetworking')]"
+            }
+        },
+        {
+            "apiVersion": "2019-12-01",
+            "type": "Microsoft.Compute/virtualMachines",
+            "name": "[if(less(copyIndex(1), 10), concat(parameters('wvdNamePrefix'), '0', copyIndex(1)), concat(parameters('wvdNamePrefix'), copyIndex(1)))]",
+            "location": "[parameters('location')]",
+            "copy": {
+                "name": "wvd-vm-loop",
+                "count": "[parameters('wvdNumberOfInstances')]"
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/networkInterfaces/', if(less(copyIndex(1), 10), concat(parameters('wvdNamePrefix'), '0', copyIndex(1), '-nic01'), concat(parameters('wvdNamePrefix'), copyIndex(1), '-nic01')))]"
+            ],
+            "properties": {
+                "hardwareProfile": {
+                    "vmSize": "[parameters('wvdVmSize')]"
+                },
+                "availabilitySet": {
+                    "id": "[resourceId('Microsoft.Compute/availabilitySets', parameters('availabilitySetName'))]"
+                },
+                "osProfile": {
+                    "computerName": "[concat(parameters('wvdNamePrefix'), copyIndex(1))]",
+                    "adminUsername": "[variables('existingDomainUsername')]",
+                    "adminPassword": "[parameters('existingDomainPassword')]"
+                },
+                "storageProfile": {
+                    "imageReference": "[if(equals(parameters('wvdImageSource'), 'Gallery'), variables('vmImageReference').gallery, variables('vmImageReference').customImage)]",
+                    "osDisk": {
+                        "createOption": "FromImage",
+                        "managedDisk": {
+                            "storageAccountType": "[parameters('wvdVMDiskType')]"
+                        }
+                    }
+                },
+                "networkProfile": {
+                    "networkInterfaces": [
+                        {
+                            "id": "[resourceId('Microsoft.Network/networkInterfaces/', if(less(copyIndex(1), 10), concat(parameters('wvdNamePrefix'), '0', copyIndex(1), '-nic01'), concat(parameters('wvdNamePrefix'), copyIndex(1), '-nic01')))]"
+                        }
+                    ]
+                },
+                "diagnosticsProfile": {
+                    "bootDiagnostics": {
+                        "enabled": false
+                    }
+                },
+                "licenseType": "Windows_Client"
+            }
+        },
+        {
+            "apiVersion": "2019-12-01",
+            "type": "Microsoft.Compute/virtualMachines/extensions",
+            "name": "[if(less(copyIndex(1), 10), concat(parameters('wvdNamePrefix'), '0', copyIndex(1), '/joindomain'), concat(parameters('wvdNamePrefix'), copyIndex(1), '/joindomain'))]",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Compute/virtualMachines/', if(less(copyIndex(1), 10), concat(parameters('wvdNamePrefix'), '0', copyIndex(1)), concat(parameters('wvdNamePrefix'), copyIndex(1))))]"
+
+            ],
+            "copy": {
+                "name": "wvd-domain-join-loop",
+                "count": "[parameters('wvdNumberOfInstances')]"
+            },
+            "properties": {
+                "publisher": "Microsoft.Compute",
+                "type": "JsonADDomainExtension",
+                "typeHandlerVersion": "1.3",
+                "autoUpgradeMinorVersion": true,
+                "settings": {
+                    "name": "[parameters('domainToJoin')]",
+                    "ouPath": "[parameters('ouPath')]",
+                    "user": "[parameters('existingDomainUPN')]",
+                    "restart": "true",
+                    "options": "3"
+                },
+                "protectedSettings": {
+                    "password": "[parameters('existingDomainPassword')]"
+                }
+            }
+        },
+        {
+            "apiVersion": "2019-12-01",
+            "type": "Microsoft.Compute/virtualMachines/extensions",
+            "name": "[concat(parameters('wvdNamePrefix'), '01/dscextension')]",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[concat('Microsoft.Compute/virtualMachines/', parameters('wvdNamePrefix'), '01/extensions/joindomain')]"
+            ],
+            "copy": {
+                "name": "first-wvd-dsc",
+                "count": 1
+            },
+            "properties": {
+                "publisher": "Microsoft.Powershell",
+                "type": "DSC",
+                "typeHandlerVersion": "2.73",
+                "autoUpgradeMinorVersion": true,
+                "settings": {
+                    "modulesUrl": "[concat('https://', parameters('dscStorageAccount'), '.blob.core.windows.net/', parameters('dscStorageAccountContainer'), '/configuration.zip', parameters('dscStorageAccountSasToken'))]",
+                    "configurationFunction": "configuration.ps1\\CreateHostPoolAndRegisterSessionHost",
+                    "properties": {
+                        "TenantAdminCredentials": {
+                            "userName": "[parameters('tenantAdminUpnOrApplicationId')]",
+                            "password": "PrivateSettingsRef:tenantAdminPassword"
+                        },
+                        "RDBrokerURL": "[parameters('rdBrokerURL')]",
+                        "DefinedTenantGroupName": "[parameters('existingTenantGroupName')]",
+                        "TenantName": "[parameters('existingTenantName')]",
+                        "HostPoolName": "[parameters('hostPoolName')]",
+                        "Description": "[parameters('hostPoolName')]",
+                        "FriendlyName": "[parameters('hostPoolName')]",
+                        "Hours": "48",
+                        "isServicePrincipal": "[parameters('isServicePrincipal')]",
+                        "AadTenantId": "[parameters('aadTenantId')]",
+                        "EnablePersistentDesktop": false,
+                        "defaultDesktopUsers": "[concat('\"', parameters('defaultDesktopUsers'), '\"')]",
+                        "RDPSModSource": "attached"
+                    }
+                },
+                "ProtectedSettings": {
+                    "items": {
+                        "tenantAdminPassword": "[parameters('tenantAdminPassword')]"
+                    }
+                }
+            }
+        },
+        {
+            "condition": "[greater(parameters('wvdNumberOfInstances'), 1)]",
+            "apiVersion": "2019-12-01",
+            "type": "Microsoft.Compute/virtualMachines/extensions",
+            "name": "[if(less(copyIndex(2), 10), concat(parameters('wvdNamePrefix'), '0', copyIndex(2), '/dscextension'), concat(parameters('wvdNamePrefix'), copyIndex(2), '/dscextension'))]",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Compute/virtualMachines/', if(less(copyIndex(2), 10), concat(parameters('wvdNamePrefix'), '0', copyIndex(2)), concat(parameters('wvdNamePrefix'), copyIndex(2))))]",
+                "first-wvd-dsc"
+            ],
+            "copy": {
+                "name": "additional-wvd-dsc-loop",
+                "count": "[if(greater(parameters('wvdNumberOfInstances'), 1), sub(parameters('wvdNumberOfInstances'), 1), 1)]"
+            },
+            "properties": {
+                "publisher": "Microsoft.Powershell",
+                "type": "DSC",
+                "typeHandlerVersion": "2.73",
+                "autoUpgradeMinorVersion": true,
+                "settings": {
+                    "modulesUrl": "[concat('https://', parameters('dscStorageAccount'), '.blob.core.windows.net/', parameters('dscStorageAccountContainer'), '/configuration.zip', parameters('dscStorageAccountSasToken'))]",
+                    "configurationFunction": "configuration.ps1\\RegisterSessionHost",
+                    "properties": {
+                        "TenantAdminCredentials": {
+                            "userName": "[parameters('tenantAdminUpnOrApplicationId')]",
+                            "password": "PrivateSettingsRef:tenantAdminPassword"
+                        },
+                        "RDBrokerURL": "[parameters('rdBrokerURL')]",
+                        "DefinedTenantGroupName": "[parameters('existingTenantGroupName')]",
+                        "TenantName": "[parameters('existingTenantName')]",
+                        "HostPoolName": "[parameters('hostPoolName')]",
+                        "Hours": "48",
+                        "isServicePrincipal": "[parameters('isServicePrincipal')]",
+                        "AadTenantId": "[parameters('aadTenantId')]",
+                        "RDPSModSource": "attached"
+                    }
+                },
+                "ProtectedSettings": {
+                    "items": {
+                        "tenantAdminPassword": "[parameters('tenantAdminPassword')]"
+                    }
+                }
+            }
+        }
+    ],
+    "outputs": {
+    }
+}

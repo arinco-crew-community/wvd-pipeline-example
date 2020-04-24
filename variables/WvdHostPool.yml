@@ -1,0 +1,72 @@
+variables:
+# Config
+  - name: wvdNumberOfInstances
+    value: 2
+  - name: wvdNamePrefix
+    value: <vm-prefix>    
+  - name: hostPoolName
+    value: <pool-name>
+  - name: defaultDesktopUsers
+    value: <first.last@domain.com,first.last@domain.com >
+  - name: wvdImageSource
+    value: Gallery
+  - name: wvdCustomImageSourceName
+    value: <image-name>
+  - name: wvdCustomImageSourceResourceGroup
+    value: <image-resource-group>
+  - name: wvdGalleryImageSKU
+    value: Windows-10-Enterprise-multi-session-with-Office-365-ProPlus
+
+# DSC 
+  - name: wvdDscContainer
+    value: dsc
+
+# Deployment
+  - name: wvdLocation
+    value: AustraliaEast
+  - name: wvdResourceGroup
+    value: <wvd-resource-group>
+
+# VMs
+  - name: wvdVmSize
+    value: Standard_B1ms
+  - name: wvdVMDiskType
+    value: Standard_LRS
+  - name: availabilitySetName
+    value: <availability-set-name>
+  - name: availabilitySetUpdateDomains
+    value: 5
+  - name: availabilitySetFaultDomains
+    value: 2       
+
+# Domain    
+  - name: domainToJoin
+    value: <contoso.com>
+  - name: existingDomainUPN
+    value: <domainjoinaccount@contoso.com>
+  - name: ouPath
+    value: OU=Computers,DC=contoso,DC=com
+
+# Networking    
+  - name: existingVnetName
+    value: <vnet-name>
+  - name: existingSubnetName
+    value: <subnet-name>
+  - name: virtualNetworkResourceGroupName
+    value: <vnet-resource-group>
+  - name: enableAcceleratedNetworking
+    value: false
+
+# Settings
+  - name: rdBrokerURL
+    value: https://rdbroker.wvd.microsoft.com
+  - name: existingTenantGroupName
+    value: Default Tenant Group
+  - name: defaultDesktopAppGroup
+    value: Desktop Application Group    
+  - name: existingTenantName
+    value: <wvd-tenant-name>
+  - name: wvdServicePrincipal
+    value: <wvd-serviceprincipal-name>
+  - name: isServicePrincipal
+    value: true
