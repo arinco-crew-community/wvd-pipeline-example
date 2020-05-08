@@ -21,7 +21,7 @@
             "metadata": {
                 "description": "Select the image source for the session host vms. VMs from a Gallery image will be created with Managed Disks."
             },
-            "allowedValues": [                
+            "allowedValues": [
                 "CustomImage",
                 "Gallery"
             ]
@@ -35,6 +35,7 @@
         },
         "wvdGalleryImageSKU": {
             "type": "string",
+            "defaultValue": "Windows-10-Enterprise-multi-session-with-Office-365-ProPlus",
             "metadata": {
                 "description": "(Required when wvdImageSource = Gallery) Gallery image SKU. Values without a numeric suffix, such as 1903, will use the latest release available in this template."
             },
@@ -94,6 +95,12 @@
                 "description": "A username in the domain that has privileges to join the session hosts to the domain. For example, 'user1@contoso.com'."
             }
         },
+        "existingDomainUsername": {
+            "type": "string",
+            "metadata": {
+                "description": "SamAccountName in the domain that has privileges to join the session hosts to the domain. For example, 'user1'."
+            }
+        },
         "existingDomainPassword": {
             "type": "securestring",
             "metadata": {
@@ -124,61 +131,10 @@
                 "description": "The resource group containing the existing virtual network."
             }
         },
-        "rdBrokerURL": {
+        "hostPoolRegistrationToken": {
             "type": "string",
             "metadata": {
-                "description": "The Broker URL of the Windows Virtual Desktop deployment the session hosts will be connected to."
-            },
-            "defaultValue": "https://rdbroker.wvd.microsoft.com"
-        },
-        "existingTenantGroupName": {
-            "type": "string",
-            "metadata": {
-                "description": "The name of the tenant group in the Windows Virtual Desktop deployment"
-            },
-            "defaultValue": "Default Tenant Group"
-        },
-        "existingTenantName": {
-            "type": "string",
-            "metadata": {
-                "description": "The name of the tenant in the Windows Virtual Desktop deployment."
-            }
-        },
-        "hostPoolName": {
-            "type": "string",
-            "metadata": {
-                "description": "The name of the hostpool to be created in the RDS Tenant."
-            }
-        },
-        "defaultDesktopUsers": {
-            "type": "string",
-            "defaultValue": "",
-            "metadata": {
-                "description": "(Optional) Provide a comma separated list of users you would like to assign to access the desktop for this host pool. Example: user1@contoso.com,user2@contoso.com,user3@contoso.com "
-            }
-        },
-        "tenantAdminUpnOrApplicationId": {
-            "type": "string",
-            "metadata": {
-                "description": "The template will fail if you enter a user account that requires MFA or an application that is secured by a certificate. The UPN or ApplicationId must be an RDS Owner in the Windows Virtual Desktop Tenant to create the hostpool or an RDS Owner of the host pool to provision the host pool with additional VMs."
-            }
-        },
-        "tenantAdminPassword": {
-            "type": "securestring",
-            "metadata": {
-                "description": "The password that corresponds to the tenant admin UPN."
-            }
-        },
-        "isServicePrincipal": {
-            "type": "bool",
-            "metadata": {
-                "description": "The boolean value indicating if the credentials are for a service principal."
-            }
-        },
-        "aadTenantId": {
-            "type": "string",
-            "metadata": {
-                "description": "This value identifies the Azure AD tenant."
+                "description": "Windows Virtual Desktop host pool registration token."
             }
         },
         "availabilitySetName": {
@@ -204,24 +160,36 @@
         "dscStorageAccount": {
             "type": "string",
             "metadata": {
-                "description": "Storage account with DSC configuration files."
+                "description": "Storage account with DSC configuration."
             }
         },
         "dscStorageAccountContainer": {
             "type": "string",
             "metadata": {
-                "description": "Storage account container holding DSC confguration files."
+                "description": "Storage account container holding DSC configuration."
             }
         },
         "dscStorageAccountSasToken": {
             "type": "string",
             "metadata": {
-                "description": "Dsc storage account sas token."
+                "description": "Storage account sas token."
+            }
+        },
+        "userProfileEnabled": {
+            "type": "bool",
+            "metadata": {
+                "description": "Enable FsLogix user profiles."
+            }
+        },
+        "userProfileFileShare": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata": {
+                "description": "Azure file share path to store user profiles, example fsprofile.file.core.windows.net\\share"
             }
         }
     },
     "variables": {
-        "existingDomainUsername": "[first(split(parameters('existingDomainUPN'), '@'))]",     
         "vmImageReference": {
             "customImage": {
                 "id": "[resourceId(parameters('wvdCustomImageSourceResourceGroup'), 'Microsoft.Compute/images', parameters('wvdCustomImageSourceName'))]"
@@ -268,7 +236,7 @@
             "sku": {
                 "name": "Aligned"
             }
-        },        
+        },
         {
             "apiVersion": "2019-11-01",
             "type": "Microsoft.Network/networkInterfaces",
@@ -316,13 +284,14 @@
                     "id": "[resourceId('Microsoft.Compute/availabilitySets', parameters('availabilitySetName'))]"
                 },
                 "osProfile": {
-                    "computerName": "[concat(parameters('wvdNamePrefix'), copyIndex(1))]",
-                    "adminUsername": "[variables('existingDomainUsername')]",
+                    "computerName": "[if(less(copyIndex(1), 10), concat(parameters('wvdNamePrefix'), '0', copyIndex(1)), concat(parameters('wvdNamePrefix'), copyIndex(1)))]",
+                    "adminUsername": "[parameters('existingDomainUsername')]",
                     "adminPassword": "[parameters('existingDomainPassword')]"
                 },
                 "storageProfile": {
                     "imageReference": "[if(equals(parameters('wvdImageSource'), 'Gallery'), variables('vmImageReference').gallery, variables('vmImageReference').customImage)]",
                     "osDisk": {
+                        "name": "[if(less(copyIndex(1), 10), concat(parameters('wvdNamePrefix'), '0', copyIndex(1), '_OsDisk_1'), concat(parameters('wvdNamePrefix'), copyIndex(1), '_OsDisk_1'))]",
                         "createOption": "FromImage",
                         "managedDisk": {
                             "storageAccountType": "[parameters('wvdVMDiskType')]"
@@ -351,7 +320,6 @@
             "location": "[parameters('location')]",
             "dependsOn": [
                 "[resourceId('Microsoft.Compute/virtualMachines/', if(less(copyIndex(1), 10), concat(parameters('wvdNamePrefix'), '0', copyIndex(1)), concat(parameters('wvdNamePrefix'), copyIndex(1))))]"
-
             ],
             "copy": {
                 "name": "wvd-domain-join-loop",
@@ -377,14 +345,15 @@
         {
             "apiVersion": "2019-12-01",
             "type": "Microsoft.Compute/virtualMachines/extensions",
-            "name": "[concat(parameters('wvdNamePrefix'), '01/dscextension')]",
+            "name": "[if(less(copyIndex(1), 10), concat(parameters('wvdNamePrefix'), '0', copyIndex(1), '/wvdsoftware'), concat(parameters('wvdNamePrefix'), copyIndex(1), '/wvdsoftware'))]",
             "location": "[parameters('location')]",
             "dependsOn": [
-                "[concat('Microsoft.Compute/virtualMachines/', parameters('wvdNamePrefix'), '01/extensions/joindomain')]"
+                "[resourceId('Microsoft.Compute/virtualMachines/', if(less(copyIndex(1), 10), concat(parameters('wvdNamePrefix'), '0', copyIndex(1)), concat(parameters('wvdNamePrefix'), copyIndex(1))))]",
+                "wvd-domain-join-loop"
             ],
             "copy": {
-                "name": "first-wvd-dsc",
-                "count": 1
+                "name": "wvd-software-loop",
+                "count": "[parameters('wvdNumberOfInstances')]"
             },
             "properties": {
                 "publisher": "Microsoft.Powershell",
@@ -393,74 +362,12 @@
                 "autoUpgradeMinorVersion": true,
                 "settings": {
                     "modulesUrl": "[concat('https://', parameters('dscStorageAccount'), '.blob.core.windows.net/', parameters('dscStorageAccountContainer'), '/configuration.zip', parameters('dscStorageAccountSasToken'))]",
-                    "configurationFunction": "configuration.ps1\\CreateHostPoolAndRegisterSessionHost",
+                    "configurationFunction": "configuration.ps1\\WVDSoftwareInstall",
                     "properties": {
-                        "TenantAdminCredentials": {
-                            "userName": "[parameters('tenantAdminUpnOrApplicationId')]",
-                            "password": "PrivateSettingsRef:tenantAdminPassword"
-                        },
-                        "RDBrokerURL": "[parameters('rdBrokerURL')]",
-                        "DefinedTenantGroupName": "[parameters('existingTenantGroupName')]",
-                        "TenantName": "[parameters('existingTenantName')]",
-                        "HostPoolName": "[parameters('hostPoolName')]",
-                        "Description": "[parameters('hostPoolName')]",
-                        "FriendlyName": "[parameters('hostPoolName')]",
-                        "Hours": "48",
-                        "isServicePrincipal": "[parameters('isServicePrincipal')]",
-                        "AadTenantId": "[parameters('aadTenantId')]",
-                        "EnablePersistentDesktop": false,
-                        "defaultDesktopUsers": "[concat('\"', parameters('defaultDesktopUsers'), '\"')]",
-                        "RDPSModSource": "attached"
+                        "azureUserProfileShare": "[if(parameters('userProfileEnabled'), parameters('userProfileFileShare'), 'false')]",
+                        "wvdRegistrationToken": "[parameters('hostPoolRegistrationToken')]"
                     }
-                },
-                "ProtectedSettings": {
-                    "items": {
-                        "tenantAdminPassword": "[parameters('tenantAdminPassword')]"
-                    }
-                }
-            }
-        },
-        {
-            "condition": "[greater(parameters('wvdNumberOfInstances'), 1)]",
-            "apiVersion": "2019-12-01",
-            "type": "Microsoft.Compute/virtualMachines/extensions",
-            "name": "[if(less(copyIndex(2), 10), concat(parameters('wvdNamePrefix'), '0', copyIndex(2), '/dscextension'), concat(parameters('wvdNamePrefix'), copyIndex(2), '/dscextension'))]",
-            "location": "[parameters('location')]",
-            "dependsOn": [
-                "[resourceId('Microsoft.Compute/virtualMachines/', if(less(copyIndex(2), 10), concat(parameters('wvdNamePrefix'), '0', copyIndex(2)), concat(parameters('wvdNamePrefix'), copyIndex(2))))]",
-                "first-wvd-dsc"
-            ],
-            "copy": {
-                "name": "additional-wvd-dsc-loop",
-                "count": "[if(greater(parameters('wvdNumberOfInstances'), 1), sub(parameters('wvdNumberOfInstances'), 1), 1)]"
-            },
-            "properties": {
-                "publisher": "Microsoft.Powershell",
-                "type": "DSC",
-                "typeHandlerVersion": "2.73",
-                "autoUpgradeMinorVersion": true,
-                "settings": {
-                    "modulesUrl": "[concat('https://', parameters('dscStorageAccount'), '.blob.core.windows.net/', parameters('dscStorageAccountContainer'), '/configuration.zip', parameters('dscStorageAccountSasToken'))]",
-                    "configurationFunction": "configuration.ps1\\RegisterSessionHost",
-                    "properties": {
-                        "TenantAdminCredentials": {
-                            "userName": "[parameters('tenantAdminUpnOrApplicationId')]",
-                            "password": "PrivateSettingsRef:tenantAdminPassword"
-                        },
-                        "RDBrokerURL": "[parameters('rdBrokerURL')]",
-                        "DefinedTenantGroupName": "[parameters('existingTenantGroupName')]",
-                        "TenantName": "[parameters('existingTenantName')]",
-                        "HostPoolName": "[parameters('hostPoolName')]",
-                        "Hours": "48",
-                        "isServicePrincipal": "[parameters('isServicePrincipal')]",
-                        "AadTenantId": "[parameters('aadTenantId')]",
-                        "RDPSModSource": "attached"
-                    }
-                },
-                "ProtectedSettings": {
-                    "items": {
-                        "tenantAdminPassword": "[parameters('tenantAdminPassword')]"
-                    }
+                    
                 }
             }
         }

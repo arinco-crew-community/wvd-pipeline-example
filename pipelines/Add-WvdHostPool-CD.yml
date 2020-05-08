@@ -3,9 +3,7 @@ trigger: none
 name: Add-WvdHostPool-CD
 
 variables:
-  - template: /Azure/WVD/variables/ServiceConnections.yml
-  - template: /Azure/WVD/variables/WvdHostPool.yml
-  - template: /Azure/WVD/variables/KeyVault.yml
+  - template: /variables/WVD.yml
 
 stages:
   - stage: Production
@@ -21,48 +19,65 @@ stages:
           runOnce:
             deploy:
               steps:
-                - checkout: self
+                - checkout: self        
 
                 - task: AzureCLI@2
-                  name: createDscStorage
-                  displayName: Create Temporary DSC Storage Account
+                  name: createTempStorage
+                  displayName: Create Temporary Storage Account
                   inputs:
                     azureSubscription: ${{ variables.serviceConnectionPrd }}
                     scriptType: pscore
                     scriptLocation: inlineScript
-                    inlineScript: |
+                    inlineScript: |                      
                       $name = (new-guid).Guid.Replace("-","").Substring(0,20)
                       $expiry = (get-date).AddDays(1).ToString('yyyy-MM-dd')
                       az group create --location $env:WVDLOCATION --name $env:WVDRESOURCEGROUP --only-show-errors
                       az storage account create --name $name --resource-group $env:WVDRESOURCEGROUP --location $env:WVDLOCATION --sku Standard_LRS --only-show-errors
                       az storage container create --account-name $name --name $env:WVDDSCCONTAINER --only-show-errors                      
                       $saskey = "?" + (az storage account generate-sas --account-name $name --expiry $expiry --https-only --permissions r --resource-types co --services b --only-show-errors --output tsv)
-                      write-output ("##vso[task.setvariable variable=dscStorage;]$name")
-                      write-output ("##vso[task.setvariable variable=dscStorageName;isOutput=true]$name")
-                      write-output ("##vso[task.setvariable variable=dscStorageSasKey;isOutput=true]$saskey")
+                      write-output ("##vso[task.setvariable variable=tempStorage;]$name")
+                      write-output ("##vso[task.setvariable variable=tempStorageName;isOutput=true]$name")                      
+                      write-output ("##vso[task.setvariable variable=tempStorageSasToken;isOutput=true]$saskey")
 
                 - task: AzureFileCopy@3
-                  displayName: Upload DSC Config Files
+                  displayName: Upload DSC Configuration Files
                   inputs:
-                    SourcePath: Azure/WVD/dsc/configuration.zip
+                    SourcePath: dsc/configuration.zip
                     azureSubscription: ${{ variables.serviceConnectionPrd }}
                     Destination: AzureBlob
-                    storage: $(dscStorage)
-                    ContainerName: ${{ variables.wvdDscContainer }}                    
+                    storage: $(tempStorage)
+                    ContainerName: ${{ variables.wvdDscContainer }}
 
       - deployment: deploy_wvd_prd
         displayName: Deploy        
         dependsOn: build_wvd_prd
-        pool: private   
+        pool:
+          vmimage: windows-2019 
         environment: Production
         variables:
-          DSCSTORAGENAME: $[ dependencies.build_wvd_prd.outputs['build_wvd_prd.createDscStorage.dscStorageName'] ]
-          DSCSTORAGESASKEY: $[ dependencies.build_wvd_prd.outputs['build_wvd_prd.createDscStorage.dscStorageSasKey'] ]
+          TEMPSTORAGENAME: $[ dependencies.build_wvd_prd.outputs['build_wvd_prd.createTempStorage.tempStorageName'] ]          
+          TEMPSTORAGESASTOKEN: $[ dependencies.build_wvd_prd.outputs['build_wvd_prd.createTempStorage.tempStorageSasToken'] ]
         strategy:
           runOnce:
             deploy:              
               steps:
                 - checkout: self
+
+                - task: AzurePowerShell@4
+                  displayName: Create Host Pool                  
+                  inputs:
+                    azureSubscription: ${{ variables.serviceConnectionPrd }}
+                    ScriptType: InlineScript
+                    Inline: |
+                      Import-Module .\modules\az.desktopvirtualization.0.1.0\Az.DesktopVirtualization.psd1                                     
+                      $hostpool = New-AzWvdHostPool -Name $env:HOSTPOOLNAME -ResourceGroupName $env:WVDRESOURCEGROUP -Location $env:WVDMETADATALOCATION -HostPoolType Pooled -LoadBalancerType BreadthFirst -MaxSessionLimit $env:WVDVMSESSIONLIMIT
+                      $token = (New-AzWvdRegistrationInfo -ResourceGroupName $env:WVDRESOURCEGROUP -HostPoolName $env:HOSTPOOLNAME -ExpirationTime (get-date).AddHours(1)).Token
+                      $workspaceId = (Get-AzOperationalInsightsWorkspace | Where-Object {$_.Name -eq $env:WVDLOGANALYTICS}).ResourceId                      
+                      Set-AzDiagnosticSetting -ResourceId $hostpool.Id -Name ("dg-" + $hostpool.Name.Replace(" ","").ToLower()) -WorkspaceId $workspaceId -Enabled $true -Category ("Checkpoint", "Error", "Management", "Connection", "HostRegistration") -WarningAction SilentlyContinue | Out-Null
+                      write-output ("##vso[task.setvariable variable=hostPoolToken;]$token")
+                    azurePowerShellVersion: LatestVersion
+                    FailOnStandardError: true
+                    pwsh: true
 
                 - task: AzurePowerShell@4
                   displayName: Generate Temporary Password
@@ -78,57 +93,38 @@ stages:
                       write-output ("##vso[task.setvariable variable=tempPassword;]$pwd")
                       write-output ("##vso[task.setvariable variable=tempPasswordKeyId;isOutput=true]$keyid")
                       start-sleep 10 #allow time for credential to get created
-                    azurePowerShellVersion: LatestVersion  
+                    azurePowerShellVersion: LatestVersion
+                    FailOnStandardError: true
 
                 - task: AzureKeyVault@1
-                  displayName: Download WVD Domain Join Password
+                  displayName: Download Domain Join Account Password
                   inputs:
                     azureSubscription: ${{ variables.serviceConnectionPrd }}
-                    KeyVaultName: ${{ variables.wvdKeyVault }}
-                    SecretsFilter: ${{ variables.wvdDomainJoinPassword }}
+                    KeyVaultName: ${{ variables.kvName }}
+                    SecretsFilter: ${{ variables.domainJoinPassword }}
 
-                - task: AzureCLI@2                  
-                  displayName: Get Azure AD Tenant Id
-                  inputs:
-                    azureSubscription: ${{ variables.serviceConnectionPrd }}
-                    scriptType: pscore
-                    scriptLocation: inlineScript
-                    inlineScript: |
-                      $tenantId = az account show --query tenantId
-                      write-output ("##vso[task.setvariable variable=aadTenantId;]$tenantId")
-
-                - task: AzureCLI@2                  
-                  displayName: Get Service Principal App Id                  
-                  inputs:
-                    azureSubscription: ${{ variables.serviceConnectionPrd }}
-                    scriptType: pscore
-                    scriptLocation: inlineScript
-                    inlineScript: |
-                      $id = az ad sp list --display-name $env:WVDSERVICEPRINCIPAL --query [].appId --output tsv 
-                      write-output ("##vso[task.setvariable variable=svcPrincipalAppId]$id")                                         
-
-                - task: AzureResourceGroupDeployment@2                                     
+                - task: AzureResourceGroupDeployment@2                                      
                   displayName: Deploy WVD Host Pool (Marketplace)
-                  condition: eq('${{ variables.wvdImageSource }}', 'Gallery')
+                  condition: and(succeeded(), eq(${{ variables.wvdImageSource }}, 'Gallery'))
                   inputs:
                     azureSubscription: ${{ variables.serviceConnectionPrd }}
                     resourceGroupName: ${{ variables.wvdResourceGroup }}
                     location: ${{ variables.wvdLocation }}
-                    csmFile: Azure/WVD/armtemplates/WVD/WVD.json
-                    csmParametersFile: Azure/WVD/armtemplates/WVD/WVD.parameters.json                    
-                    overrideParameters: -wvdNamePrefix ${{ variables.wvdNamePrefix }} -wvdNumberOfInstances ${{ variables.wvdNumberOfInstances }} -wvdImageSource ${{ variables.wvdImageSource }} -wvdGalleryImageSKU ${{ variables.wvdGalleryImageSKU }} -wvdVMDiskType ${{ variables.wvdVMDiskType }} -wvdVmSize ${{ variables.wvdVmSize }} -enableAcceleratedNetworking ${{ variables.enableAcceleratedNetworking }} -domainToJoin ${{ variables.domainToJoin }} -existingDomainUPN ${{ variables.existingDomainUPN }} -existingDomainPassword "$(${{ variables.wvdDomainJoinPassword }})" -ouPath "${{ variables.ouPath }}" -existingVnetName ${{ variables.existingVnetName }} -existingSubnetName ${{ variables.existingSubnetName }} -virtualNetworkResourceGroupName ${{ variables.virtualNetworkResourceGroupName }} -rdBrokerURL "${{ variables.rdBrokerURL }}" -existingTenantGroupName "${{ variables.existingTenantGroupName }}" -existingTenantName "${{ variables.existingTenantName }}" -hostPoolName "${{ variables.hostPoolName }}" -defaultDesktopUsers "${{ variables.defaultDesktopUsers }}" -tenantAdminUpnOrApplicationId $(svcPrincipalAppId) -tenantAdminPassword "$(tempPassword)" -isServicePrincipal ${{ variables.isServicePrincipal }} -aadTenantId $(aadTenantId) -availabilitySetName ${{ variables.availabilitySetName }} -availabilitySetUpdateDomains ${{ variables.availabilitySetUpdateDomains }} -availabilitySetFaultDomains ${{ variables.availabilitySetFaultDomains }} -dscStorageAccount $(dscStorageName) -dscStorageAccountContainer ${{ variables.wvdDscContainer }} -dscStorageAccountSasToken "$(dscStorageSasKey)"
+                    csmFile: armtemplates/WVD/WVD.json
+                    csmParametersFile: armtemplates/WVD/WVD.parameters.json                    
+                    overrideParameters: -wvdNamePrefix ${{ variables.wvdNamePrefix }} -wvdNumberOfInstances ${{ variables.wvdNumberOfInstances }} -wvdImageSource ${{ variables.wvdImageSource }} -wvdGalleryImageSKU ${{ variables.wvdGalleryImageSKU }} -wvdVMDiskType ${{ variables.wvdVMDiskType }} -wvdVmSize ${{ variables.wvdVmSize }} -enableAcceleratedNetworking ${{ variables.enableAcceleratedNetworking }} -domainToJoin ${{ variables.domainToJoin }} -existingDomainUPN ${{ variables.existingDomainUPN }} -existingDomainUsername ${{ variables.existingDomainSamAccountName }} -existingDomainPassword "$(${{ variables.domainJoinPassword }})" -ouPath "${{ variables.ouPath }}" -existingVnetName ${{ variables.existingVnetName }} -existingSubnetName ${{ variables.existingSubnetName }} -virtualNetworkResourceGroupName ${{ variables.virtualNetworkResourceGroupName }} -hostPoolRegistrationToken "$(hostPoolToken)" -availabilitySetName ${{ variables.availabilitySetName }} -availabilitySetUpdateDomains ${{ variables.availabilitySetUpdateDomains }} -availabilitySetFaultDomains ${{ variables.availabilitySetFaultDomains }} -dscStorageAccount $(tempStorageName) -dscStorageAccountContainer ${{ variables.wvdDscContainer }} -dscStorageAccountSasToken $(tempStorageSasToken) -userProfileEnabled ${{ variables.userProfileEnabled }} -userProfileFileShare "${{ variables.userProfileFileShare }}"
                     deploymentMode: Incremental
 
-                - task: AzureResourceGroupDeployment@2                                                     
+                - task: AzureResourceGroupDeployment@2                                     
                   displayName: Deploy WVD Host Pool (CustomImage)
-                  condition: eq('${{ variables.wvdImageSource }}', 'CustomImage')
+                  condition: and(succeeded(), eq(${{ variables.wvdImageSource }}, 'CustomImage'))
                   inputs:
                     azureSubscription: ${{ variables.serviceConnectionPrd }}
                     resourceGroupName: ${{ variables.wvdResourceGroup }}
                     location: ${{ variables.wvdLocation }}
-                    csmFile: Azure/WVD/armtemplates/WVD/WVD.json
-                    csmParametersFile: Azure/WVD/armtemplates/WVD/WVD.parameters.json                    
-                    overrideParameters: -wvdNamePrefix ${{ variables.wvdNamePrefix }} -wvdNumberOfInstances ${{ variables.wvdNumberOfInstances }} -wvdImageSource ${{ variables.wvdImageSource }} -wvdGalleryImageSKU ${{ variables.wvdGalleryImageSKU }} -wvdCustomImageSourceName ${{ variables.wvdCustomImageSourceName }} -wvdCustomImageSourceResourceGroup ${{ variables.wvdCustomImageSourceResourceGroup }} -wvdVMDiskType ${{ variables.wvdVMDiskType }} -wvdVmSize ${{ variables.wvdVmSize }} -enableAcceleratedNetworking ${{ variables.enableAcceleratedNetworking }} -domainToJoin ${{ variables.domainToJoin }} -existingDomainUPN ${{ variables.existingDomainUPN }} -existingDomainPassword "$(${{ variables.wvdDomainJoinPassword }})" -ouPath "${{ variables.ouPath }}" -existingVnetName ${{ variables.existingVnetName }} -existingSubnetName ${{ variables.existingSubnetName }} -virtualNetworkResourceGroupName ${{ variables.virtualNetworkResourceGroupName }} -rdBrokerURL "${{ variables.rdBrokerURL }}" -existingTenantGroupName "${{ variables.existingTenantGroupName }}" -existingTenantName "${{ variables.existingTenantName }}" -hostPoolName "${{ variables.hostPoolName }}" -defaultDesktopUsers "${{ variables.defaultDesktopUsers }}" -tenantAdminUpnOrApplicationId $(svcPrincipalAppId) -tenantAdminPassword "$(tempPassword)" -isServicePrincipal ${{ variables.isServicePrincipal }} -aadTenantId $(aadTenantId) -availabilitySetName ${{ variables.availabilitySetName }} -availabilitySetUpdateDomains ${{ variables.availabilitySetUpdateDomains }} -availabilitySetFaultDomains ${{ variables.availabilitySetFaultDomains }} -dscStorageAccount $(dscStorageName) -dscStorageAccountContainer ${{ variables.wvdDscContainer }} -dscStorageAccountSasToken "$(dscStorageSasKey)"
+                    csmFile: armtemplates/WVD/WVD.json
+                    csmParametersFile: armtemplates/WVD/WVD.parameters.json                    
+                    overrideParameters: -wvdNamePrefix ${{ variables.wvdNamePrefix }} -wvdNumberOfInstances ${{ variables.wvdNumberOfInstances }} -wvdImageSource ${{ variables.wvdImageSource }} -wvdCustomImageSourceName ${{ variables.wvdCustomImageSourceName }} -wvdCustomImageSourceResourceGroup ${{ variables.wvdCustomImageSourceResourceGroup }} -wvdVMDiskType ${{ variables.wvdVMDiskType }} -wvdVmSize ${{ variables.wvdVmSize }} -enableAcceleratedNetworking ${{ variables.enableAcceleratedNetworking }} -domainToJoin ${{ variables.domainToJoin }} -existingDomainUPN ${{ variables.existingDomainUPN }} -existingDomainUsername ${{ variables.existingDomainSamAccountName }} -existingDomainPassword "$(${{ variables.domainJoinPassword }})" -ouPath "${{ variables.ouPath }}" -existingVnetName ${{ variables.existingVnetName }} -existingSubnetName ${{ variables.existingSubnetName }} -virtualNetworkResourceGroupName ${{ variables.virtualNetworkResourceGroupName }} -hostPoolRegistrationToken "$(hostPoolToken)" -availabilitySetName ${{ variables.availabilitySetName }} -availabilitySetUpdateDomains ${{ variables.availabilitySetUpdateDomains }} -availabilitySetFaultDomains ${{ variables.availabilitySetFaultDomains }} -dscStorageAccount $(tempStorageName) -dscStorageAccountContainer ${{ variables.wvdDscContainer }} -dscStorageAccountSasToken $(tempStorageSasToken) -userProfileEnabled ${{ variables.userProfileEnabled }} -userProfileFileShare "${{ variables.userProfileFileShare }}"
                     deploymentMode: Incremental                    
 
       - deployment: cleanup_wvd_prd
@@ -136,33 +132,38 @@ stages:
         dependsOn: 
           - build_wvd_prd
           - deploy_wvd_prd
-        pool: private
+        pool:
+          vmimage: windows-2019
         condition: always()
         environment: Production         
         variables:
-          DSCSTORAGENAME: $[ dependencies.build_wvd_prd.outputs['build_wvd_prd.createDscStorage.dscStorageName'] ]
+          TEMPSTORAGENAME: $[ dependencies.build_wvd_prd.outputs['build_wvd_prd.createTempStorage.tempStorageName'] ]
           TEMPPASSWORDKEYID: $[ dependencies.deploy_wvd_prd.outputs['deploy_wvd_prd.genTempPassword.tempPasswordKeyId'] ]
         strategy:
           runOnce:
             deploy:          
               steps:
-                - task: AzureCLI@2
-                  enabled: true 
-                  displayName: Delete Temporary DSC Storage Account 
+                - task: AzureCLI@2                  
+                  displayName: Delete Temporary Storage Account 
+                  condition: always()
                   inputs:
-                    azureSubscription: ${{ variables.serviceConnectionPrd }}
+                    azureSubscription: ${{ variables.serviceConnectionPrd)
                     scriptType: pscore
                     scriptLocation: inlineScript
                     inlineScript: |                      
-                      az storage account delete --name $env:DSCSTORAGENAME --yes
+                      az storage account delete --name $env:TEMPSTORAGENAME --yes
 
                 - task: AzurePowerShell@4
-                  displayName: Delete Temporary Password
+                  displayName: Delete Temporary Credentials
                   condition: always()
                   inputs:
-                    azureSubscription: ${{ variables.serviceConnectionPrd }}
+                    azureSubscription: ${{ variables.serviceConnectionPrd)
                     ScriptType: InlineScript
                     Inline: |    
                       $objectid = (Get-AzADApplication -DisplayName $env:WVDSERVICEPRINCIPAL).ObjectId            
                       Remove-AzADAppCredential -ObjectId $objectId -KeyId $env:TEMPPASSWORDKEYID -Force
-                    azurePowerShellVersion: LatestVersion                     
+                      Import-Module .\modules\az.desktopvirtualization.0.1.0\Az.DesktopVirtualization.psd1                                     
+                      Remove-AzWvdRegistrationInfo -ResourceGroupName $env:WVDRESOURCEGROUP -HostPoolName $env:HOSTPOOLNAME
+                    azurePowerShellVersion: LatestVersion
+                    FailOnStandardError: true
+                    pwsh: true                                        

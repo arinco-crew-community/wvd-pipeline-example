@@ -10,10 +10,7 @@
         },
         "wvdImageSource": {
             "value": null
-        },
-        "wvdGalleryImageSKU": {
-            "value": null
-        },
+        },       
         "wvdVMDiskType": {
             "value": null
         },
@@ -29,6 +26,9 @@
         "existingDomainUPN": {
             "value": null
         },
+        "existingDomainUsername": {
+            "value": null
+        },
         "existingDomainPassword": {
             "value": null
         },
@@ -41,28 +41,7 @@
         "virtualNetworkResourceGroupName": {
             "value": null
         },
-        "rdBrokerURL": {
-            "value": null
-        },
-        "existingTenantGroupName": {
-            "value": null
-        },
-        "existingTenantName": {
-            "value": null
-        },
-        "hostPoolName": {
-            "value": null
-        },
-        "tenantAdminUpnOrApplicationId": {
-            "value": null
-        },
-        "tenantAdminPassword": {
-            "value": null
-        },
-        "isServicePrincipal": {
-            "value": null
-        },
-        "aadTenantId": {
+        "hostPoolRegistrationToken": {
             "value": null
         },
         "availabilitySetName": {
@@ -78,6 +57,9 @@
             "value": null
         },
         "ouPath":{
+            "value": null
+        },
+        "userProfileEnabled": {
             "value": null
         }
     }
