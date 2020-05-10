@@ -147,7 +147,7 @@ stages:
                   displayName: Delete Temporary Storage Account 
                   condition: always()
                   inputs:
-                    azureSubscription: ${{ variables.serviceConnectionPrd)
+                    azureSubscription: ${{ variables.serviceConnectionPrd }}
                     scriptType: pscore
                     scriptLocation: inlineScript
                     inlineScript: |                      
@@ -157,7 +157,7 @@ stages:
                   displayName: Delete Temporary Credentials
                   condition: always()
                   inputs:
-                    azureSubscription: ${{ variables.serviceConnectionPrd)
+                    azureSubscription: ${{ variables.serviceConnectionPrd }}
                     ScriptType: InlineScript
                     Inline: |    
                       $objectid = (Get-AzADApplication -DisplayName $env:WVDSERVICEPRINCIPAL).ObjectId            
